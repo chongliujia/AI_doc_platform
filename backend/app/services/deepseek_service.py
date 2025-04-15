@@ -56,6 +56,24 @@ class DeepSeekService(AIServiceInterface):
             logger.error(f"生成文本完成时出错: {str(e)}")
             return None
     
+    def call_api(self, messages: List[Dict[str, str]], temperature: float = 0.7, max_tokens: int = 2000) -> Optional[Dict[str, Any]]:
+        """
+        调用AI API
+        
+        Args:
+            messages: 消息列表，格式为[{"role": "user", "content": "你好"}]
+            temperature: 温度参数，控制随机性
+            max_tokens: 生成的最大token数
+            
+        Returns:
+            API响应，如果请求失败则返回None
+        """
+        try:
+            return self.client.call_api(messages, temperature, max_tokens)
+        except Exception as e:
+            logger.error(f"调用API时出错: {str(e)}")
+            return None
+    
     def generate_document_outline(self, topic: str, doc_type: str) -> Optional[List[Dict[str, Any]]]:
         """
         生成文档大纲

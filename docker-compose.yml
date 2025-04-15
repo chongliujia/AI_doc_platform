@@ -83,4 +83,4 @@ volumes:
 
 networks:
   app-network:
-    driver: bridge 
+    driver: bridge

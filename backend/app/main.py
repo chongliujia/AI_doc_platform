@@ -6,6 +6,7 @@ import logging
 
 from .api.routes import router as api_router
 from .core.config import settings
+from .core.database import connect_to_mongodb, close_mongodb_connection
 
 # 配置日志
 logging.basicConfig(
@@ -49,6 +50,18 @@ def read_root():
 def health_check():
     """健康检查接口"""
     return {"status": "healthy"}
+
+# 启动事件
+@app.on_event("startup")
+async def startup_db_client():
+    """启动时连接数据库"""
+    await connect_to_mongodb()
+
+# 关闭事件
+@app.on_event("shutdown")
+async def shutdown_db_client():
+    """关闭时断开数据库连接"""
+    await close_mongodb_connection()
 
 if __name__ == "__main__":
     import uvicorn
