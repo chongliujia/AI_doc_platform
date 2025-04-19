@@ -2,14 +2,22 @@ FROM ubuntu:20.04
 
 WORKDIR /app
 
-# 安装Python和pip
+# 设置非交互式前端环境
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 安装Python和pip以及其他必要工具
 RUN apt-get update && \
-    apt-get install -y python3 python3-pip && \
+    apt-get install -y python3 python3-pip python3-dev \
+    build-essential libpq-dev curl wget \
+    libffi-dev libssl-dev && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 # 创建Python软链接
 RUN ln -sf /usr/bin/python3 /usr/bin/python
+
+# 更新pip
+RUN pip3 install --no-cache-dir --upgrade pip
 
 # 不复制文件，因为docker-compose中会挂载卷
 # 但是安装依赖
@@ -17,13 +25,14 @@ COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
 # 创建必要的目录并设置权限
-RUN mkdir -p /app/generated_docs && \
-    chmod 777 /app/generated_docs
+RUN mkdir -p /app/generated_docs/downloads && \
+    mkdir -p /app/generated_docs/previews && \
+    chmod -R 777 /app/generated_docs
 
 EXPOSE 8001
 
 # 添加健康检查
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-  CMD curl -f http://localhost:8001/ || exit 1
+  CMD curl -f http://localhost:8001/api/health || exit 1
 
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"] 
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"] 

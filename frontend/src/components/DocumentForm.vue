@@ -19,7 +19,23 @@
         <select id="docType" v-model="docType" required>
           <option value="ppt">PPT演示文稿</option>
           <option value="word">Word文档</option>
+          <option value="pdf">PDF文档</option>
         </select>
+      </div>
+      
+      <div class="form-group">
+        <label for="maxPages">页数限制 (可选)</label>
+        <input 
+          id="maxPages" 
+          v-model.number="maxPages" 
+          type="number" 
+          min="1" 
+          max="100" 
+          placeholder="输入最大页数，留空表示不限制"
+        />
+        <small class="field-hint">
+          {{ getMaxPagesHint }}
+        </small>
       </div>
       
       <div class="form-group">
@@ -33,6 +49,14 @@
       </div>
       
       <div class="form-group">
+        <label for="aiServiceType">AI服务类型 (可选)</label>
+        <select id="aiServiceType" v-model="aiServiceType">
+          <option value="deepseek">DeepSeek</option>
+          <option value="openai">OpenAI</option>
+        </select>
+      </div>
+      
+      <div class="form-group">
         <label for="template">选择模板 (可选)</label>
         <select id="template" v-model="templateId">
           <option value="default">默认模板</option>
@@ -42,9 +66,11 @@
         </select>
       </div>
       
-      <button type="submit" :disabled="submitting">
-        {{ submitting ? '生成中...' : '生成文档' }}
-      </button>
+      <div class="form-actions">
+        <button type="button" @click="previewOutline" class="btn preview-btn primary">
+          <i class="fa fa-list-ul"></i> 预览大纲并继续
+        </button>
+      </div>
       
       <div class="advanced-link">
         需要更精确控制? <a href="#" @click.prevent="$emit('switch-mode')">切换到高级模式</a>
@@ -62,7 +88,9 @@ export default {
     return {
       topic: '',
       docType: 'ppt',
+      maxPages: null,
       additionalInfo: '',
+      aiServiceType: 'deepseek',
       templateId: 'default',
       submitting: false,
       error: null,
@@ -72,6 +100,22 @@ export default {
         { id: 'creative', name: '创意模板' }
       ]
     };
+  },
+  computed: {
+    getMaxPagesHint() {
+      if (!this.docType) return '';
+      
+      switch(this.docType) {
+        case 'ppt':
+          return '推荐范围：10-30页幻灯片';
+        case 'word':
+          return '推荐范围：5-20页文档';
+        case 'pdf':
+          return '推荐范围：5-20页文档';
+        default:
+          return '';
+      }
+    }
   },
   methods: {
     ...mapActions('documents', ['createDocument']),
@@ -90,7 +134,9 @@ export default {
           topic: this.topic,
           doc_type: this.docType,
           additional_info: this.additionalInfo,
-          template_id: this.templateId
+          ai_service_type: this.aiServiceType,
+          template_id: this.templateId,
+          max_pages: this.maxPages
         };
         
         const response = await this.createDocument(documentData);
@@ -104,6 +150,35 @@ export default {
       } catch (error) {
         this.error = '创建文档时出错，请重试';
         console.error('Submit error:', error);
+      } finally {
+        this.submitting = false;
+      }
+    },
+    
+    async previewOutline() {
+      if (!this.topic) {
+        this.error = '请输入文档主题';
+        return;
+      }
+      
+      this.submitting = true;
+      this.error = null;
+      
+      try {
+        // 导航到大纲预览页面，并传递表单数据
+        this.$router.push({
+          path: '/outline-preview',
+          query: {
+            topic: this.topic,
+            docType: this.docType,
+            additionalInfo: this.additionalInfo,
+            aiServiceType: this.aiServiceType,
+            maxPages: this.maxPages
+          }
+        });
+      } catch (error) {
+        this.error = '创建大纲预览时出错，请重试';
+        console.error('Preview error:', error);
       } finally {
         this.submitting = false;
       }
@@ -136,6 +211,13 @@ input, select, textarea {
   border-radius: 4px;
 }
 
+.field-hint {
+  display: block;
+  margin-top: 5px;
+  color: #666;
+  font-size: 0.8rem;
+}
+
 button {
   background-color: #4CAF50;
   color: white;
@@ -149,6 +231,25 @@ button {
 button:disabled {
   background-color: #cccccc;
   cursor: not-allowed;
+}
+
+.form-actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.submit-btn {
+  background-color: #757575;
+  color: white;
+  flex: 1;
+}
+
+.preview-btn {
+  background-color: #4CAF50;
+  color: white;
+  flex: 1.5;
+  font-weight: bold;
 }
 
 .advanced-link {

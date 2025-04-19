@@ -1,5 +1,5 @@
 from fastapi import Depends
-from typing import Optional
+from typing import Optional, Dict
 
 from ..providers.provider_factory import ProviderFactory
 from ..providers.ai.ai_provider import AIProvider
@@ -16,9 +16,18 @@ _storage_provider = None
 # 文档Controller单例
 _document_controller = None
 
+# AI Provider缓存
+_ai_providers: Dict[str, AIProvider] = {}
+
 def get_ai_provider(provider_type: str = "deepseek") -> AIProvider:
-    """获取AI Provider依赖"""
-    return ProviderFactory.get_ai_provider(provider_type)
+    """获取AI Provider依赖（缓存实例）"""
+    global _ai_providers
+    if provider_type not in _ai_providers:
+        _ai_providers[provider_type] = ProviderFactory.get_ai_provider(provider_type)
+        # 记录首次创建
+        import logging
+        logging.getLogger(__name__).info(f"创建并缓存AI Provider: {provider_type}")
+    return _ai_providers[provider_type]
 
 def get_storage_provider() -> StorageProvider:
     """获取存储Provider依赖（单例）"""
@@ -47,4 +56,7 @@ def get_document_controller(
             storage_provider=storage_provider,
             cache_provider=cache_provider
         )
+        # 记录控制器创建
+        import logging
+        logging.getLogger(__name__).info("创建DocumentController单例")
     return _document_controller 

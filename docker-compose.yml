@@ -7,73 +7,34 @@ services:
       context: ./backend
       dockerfile: Dockerfile.local
     container_name: ai-doc-platform-backend
-    restart: unless-stopped
+    restart: always
     volumes:
       - ./backend:/app
-      - generated_docs:/app/generated_docs
+      - ./backend/generated_docs:/app/generated_docs
     env_file:
       - .env
     environment:
       - AI_API_KEY=${AI_API_KEY}
       - AI_API_ENDPOINT=${AI_API_ENDPOINT}
+      - PYTHONUNBUFFERED=1
     ports:
       - "8001:8001"
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 512M
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
-    networks:
-      - app-network
-
-  frontend:
-    image: ai_doc_platform-frontend
-    build: ./frontend
-    container_name: ai-doc-platform-frontend
-    restart: unless-stopped
-    environment:
-      - VUE_APP_API_URL=http://localhost:8080/api/v1
-    ports:
-      - "3000:80"
-    deploy:
-      resources:
-        limits:
-          cpus: '0.3'
-          memory: 256M
-    depends_on:
-      - backend
     networks:
       - app-network
 
   nginx:
-    image: ai_doc_platform-nginx
-    build: ./nginx
+    image: nginx:alpine
     container_name: ai-doc-platform-nginx
-    restart: unless-stopped
+    restart: always
     ports:
       - "8080:80"
-    depends_on:
-      - backend
-      - frontend
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf
-      - generated_docs:/usr/share/nginx/html/downloads
-    deploy:
-      resources:
-        limits:
-          cpus: '0.2'
-          memory: 128M
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:80"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+      - ./backend/generated_docs:/usr/share/nginx/html/downloads
+      - ./nginx/logs:/var/log/nginx
+      - ./frontend/dist:/usr/share/nginx/html
+    depends_on:
+      - backend
     networks:
       - app-network
 

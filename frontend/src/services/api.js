@@ -10,6 +10,7 @@ console.log('使用API URL:', API_URL, '当前端口:', currentPort);
 
 const apiClient = axios.create({
   baseURL: API_URL,
+  timeout: 180000, // 180秒超时，大幅增加超时时间以避免大型文档生成失败
   headers: {
     'Content-Type': 'application/json',
     'Accept': 'application/json'
@@ -41,24 +42,34 @@ apiClient.interceptors.request.use(
 );
 
 export default {
-  // 创建新文档
-  createDocument(documentData) {
-    return apiClient.post('/documents/', documentData);
+  // 大纲预览相关API
+  createOutlinePreview(data) {
+    return apiClient.post('/outline-preview/', data);
   },
   
-  // 创建高级文档
-  createAdvancedDocument(documentData) {
-    return apiClient.post('/advanced-documents/', documentData);
+  updateOutlinePreview(previewId, data) {
+    return apiClient.put(`/outline-preview/${previewId}`, data);
   },
   
-  // 获取文档状态
-  getDocumentStatus(documentId) {
-    return apiClient.get(`/documents/${documentId}/status`);
+  confirmOutline(data) {
+    return apiClient.post('/outline-confirm/', data);
+  },
+
+  // 文档生成相关API
+  createDocument(data) {
+    return apiClient.post('/documents/', data);
   },
   
-  // 获取文档详情
-  getDocument(documentId) {
-    return apiClient.get(`/documents/${documentId}`);
+  createAdvancedDocument(data) {
+    return apiClient.post('/advanced-documents/', data);
+  },
+  
+  getDocumentStatus(id) {
+    return apiClient.get(`/documents/${id}/status`);
+  },
+  
+  getDocument(id) {
+    return apiClient.get(`/documents/${id}`);
   },
   
   // 获取文档列表

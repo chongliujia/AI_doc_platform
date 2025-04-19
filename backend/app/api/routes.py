@@ -12,8 +12,12 @@ from fastapi.staticfiles import StaticFiles
 
 from ..models.schemas import (
     DocumentRequest, DocumentResponse, GenerationStatus, 
-    AdvancedDocumentRequest, PageChapterContent
+    AdvancedDocumentRequest, PageChapterContent,
+    OutlinePreviewRequest, OutlinePreviewResponse, 
+    OutlineUpdateRequest, OutlineConfirmRequest
 )
+from ..controllers.document_controller import DocumentController
+from ..api.dependencies import get_document_controller
 from ..services.ai_service_factory import AIServiceFactory
 from ..services.ppt_generator import PPTGenerator
 from ..services.word_generator import WordGenerator
@@ -34,10 +38,46 @@ logger = logging.getLogger(__name__)
 # app.mount("/downloads", StaticFiles(directory="generated_docs"), name="downloads")
 # app.mount("/previews", StaticFiles(directory="generated_docs"), name="previews")
 
+# 大纲预览相关路由
+@router.post("/outline-preview/", response_model=OutlinePreviewResponse)
+async def create_outline_preview(
+    request: OutlinePreviewRequest,
+    background_tasks: BackgroundTasks,
+    document_controller: DocumentController = Depends(get_document_controller)
+):
+    """
+    创建文档大纲预览
+    """
+    return await document_controller.create_outline_preview(request, background_tasks)
+
+@router.put("/outline-preview/{preview_id}", response_model=OutlinePreviewResponse)
+async def update_outline_preview(
+    preview_id: str,
+    request: OutlineUpdateRequest,
+    document_controller: DocumentController = Depends(get_document_controller)
+):
+    """
+    更新文档大纲预览
+    """
+    return await document_controller.update_outline_preview(preview_id, request)
+
+@router.post("/outline-confirm/", response_model=DocumentResponse)
+async def confirm_outline(
+    request: OutlineConfirmRequest,
+    background_tasks: BackgroundTasks,
+    document_controller: DocumentController = Depends(get_document_controller)
+):
+    """
+    确认大纲并开始生成文档
+    """
+    return await document_controller.confirm_outline(request, background_tasks)
+
+# 现有文档生成路由
 @router.post("/documents/", response_model=DocumentResponse)
 async def create_document(
     request: DocumentRequest, 
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    document_controller: DocumentController = Depends(get_document_controller)
 ):
     """
     创建新的文档生成任务
@@ -46,56 +86,40 @@ async def create_document(
     if request.doc_type not in ["ppt", "word", "pdf"]:
         raise HTTPException(status_code=400, detail="Invalid document type")
     
-    # 生成唯一ID
-    doc_id = str(uuid.uuid4())
-    
-    # 创建初始响应
-    response = DocumentResponse(
-        id=doc_id,
-        topic=request.topic,
-        doc_type=request.doc_type,
-        status="queued",
-        created_at=datetime.now().isoformat()
-    )
-    
-    # 存储任务状态
-    generation_tasks[doc_id] = {
-        "status": "queued",
-        "progress": 0.0,
-        "message": "任务已加入队列"
-    }
-    
-    # 添加后台任务
-    background_tasks.add_task(
-        generate_document_background, 
-        doc_id, 
-        request.topic, 
-        request.doc_type,
-        request.additional_info,
-        request.template_id,
-        request.ai_service_type
-    )
-    
-    return response
+    return await document_controller.create_document(request, background_tasks)
 
 @router.get("/documents/{doc_id}/status", response_model=GenerationStatus)
-async def get_document_status(doc_id: str):
+async def get_document_status(
+    doc_id: str,
+    document_controller: DocumentController = Depends(get_document_controller)
+):
     """
     获取文档生成任务的状态
     """
-    if doc_id not in generation_tasks:
-        raise HTTPException(status_code=404, detail="任务不存在")
-    
-    task_info = generation_tasks[doc_id]
-    return GenerationStatus(
-        id=doc_id,
-        status=task_info["status"],
-        progress=task_info["progress"],
-        message=task_info.get("message")
-    )
+    try:
+        return await document_controller.get_document_status(doc_id)
+    except HTTPException as e:
+        if e.status_code == 404:
+            # 提供更有用的错误信息
+            active_docs = list(document_controller.generation_tasks.keys())
+            error_msg = "文档不存在"
+            if active_docs:
+                error_msg += f"。当前活跃的文档ID: {', '.join(active_docs[:5])}"
+                if len(active_docs) > 5:
+                    error_msg += f"... 等共 {len(active_docs)} 个"
+            
+            logger.info(f"文档ID '{doc_id}' 不存在。正在返回有用的错误信息。")
+            raise HTTPException(
+                status_code=404, 
+                detail=error_msg
+            )
+        raise
 
 @router.get("/documents/{document_id}", response_model=DocumentResponse)
-async def get_document(document_id: str):
+async def get_document(
+    document_id: str,
+    document_controller: DocumentController = Depends(get_document_controller)
+):
     """
     获取生成的文档信息
     """
@@ -136,16 +160,19 @@ async def get_document(document_id: str):
     )
 
 @router.get("/documents/{document_id}/stream")
-async def stream_document_status(document_id: str):
+async def stream_document_status(
+    document_id: str,
+    document_controller: DocumentController = Depends(get_document_controller)
+):
     """
     使用 SSE 流式传输文档生成状态
     """
-    if document_id not in generation_tasks:
+    if document_id not in document_controller.generation_tasks:
         raise HTTPException(status_code=404, detail="文档不存在")
     
     async def event_generator():
         # 发送初始状态
-        task_info = generation_tasks[document_id]
+        task_info = document_controller.generation_tasks[document_id]
         yield f"data: {json.dumps(task_info)}\n\n"
         
         # 持续发送更新
@@ -155,11 +182,11 @@ async def stream_document_status(document_id: str):
         while True:
             await asyncio.sleep(0.5)  # 更频繁地检查更新
             
-            if document_id not in generation_tasks:
+            if document_id not in document_controller.generation_tasks:
                 yield f"data: {json.dumps({'error': '文档不存在'})}\n\n"
                 break
             
-            task_info = generation_tasks[document_id]
+            task_info = document_controller.generation_tasks[document_id]
             current_status = task_info.get("status")
             current_progress = task_info.get("progress", 0)
             
@@ -193,17 +220,51 @@ async def download_file(file_name: str):
     """
     下载生成的文件
     """
-    # 修正路径：生成文档目录和app是同级的
-    file_path = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "generated_docs", file_name))
+    # 修正路径：直接从 downloads 子目录查找文件
+    file_path = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "generated_docs", "downloads", file_name))
     logger.info(f"尝试下载文件: {file_path}")
     
+    # 检查文件是否存在
     if not os.path.exists(file_path):
-        logger.error(f"文件不存在: {file_path}")
-        raise HTTPException(status_code=404, detail="文件不存在")
+        # 如果完整路径不存在，尝试查找匹配的文件
+        logger.warning(f"文件不存在: {file_path}")
+        logger.info("尝试查找匹配的文件...")
+        
+        base_dir = os.path.dirname(file_path)
+        if os.path.exists(base_dir):
+            # 获取目录中的所有文件
+            files = os.listdir(base_dir)
+            
+            # 查找含有相似名称（文件名的一部分）或相似后缀的文件
+            # 先提取文件后缀
+            file_ext = os.path.splitext(file_name)[1]
+            matched_files = []
+            
+            for f in files:
+                # 同类型文件
+                if f.endswith(file_ext):
+                    matched_files.append(f)
+                    logger.info(f"找到潜在匹配文件: {f}")
+            
+            if matched_files:
+                # 找到最近修改的文件作为默认选择
+                latest_file = max(matched_files, key=lambda x: os.path.getmtime(os.path.join(base_dir, x)))
+                logger.info(f"使用最近生成的文件: {latest_file}")
+                file_path = os.path.join(base_dir, latest_file)
+            else:
+                logger.error(f"无法找到匹配的文件")
+                raise HTTPException(status_code=404, detail="文件不存在")
+        else:
+            logger.error(f"目录不存在: {base_dir}")
+            raise HTTPException(status_code=404, detail="文件不存在")
+    
+    # 获取实际文件名用于响应头
+    actual_filename = os.path.basename(file_path)
+    logger.info(f"准备下载文件: {actual_filename}")
     
     return FileResponse(
         path=file_path, 
-        filename=file_name,
+        filename=actual_filename,
         media_type="application/octet-stream"
     )
 
@@ -212,13 +273,50 @@ async def preview_file(file_name: str):
     """
     预览生成的文件
     """
-    # 修正路径：生成文档目录和app是同级的
-    file_path = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "generated_docs", file_name))
+    # 修正路径：直接从 previews 子目录查找文件
+    file_path = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "generated_docs", "previews", file_name))
     logger.info(f"尝试预览文件: {file_path}")
     
+    # 由于我们保存文件时都存储在 downloads 目录中，而不是 previews 目录
+    # 如果 previews 目录中不存在，则尝试从 downloads 目录中查找
     if not os.path.exists(file_path):
-        logger.error(f"文件不存在: {file_path}")
-        raise HTTPException(status_code=404, detail="文件不存在")
+        downloads_path = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "generated_docs", "downloads", file_name))
+        if os.path.exists(downloads_path):
+            file_path = downloads_path
+            logger.info(f"在downloads目录中找到文件: {file_path}")
+        else:
+            # 如果完整路径不存在，尝试查找匹配的文件
+            logger.warning(f"文件不存在: {file_path}")
+            logger.info("尝试查找匹配的文件...")
+            
+            # 首先在downloads目录中查找
+            downloads_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "generated_docs", "downloads"))
+            if os.path.exists(downloads_dir):
+                # 获取目录中的所有文件
+                files = os.listdir(downloads_dir)
+                
+                # 查找含有相似名称（文件名的一部分）或相似后缀的文件
+                # 先提取文件后缀
+                file_ext = os.path.splitext(file_name)[1]
+                matched_files = []
+                
+                for f in files:
+                    # 同类型文件
+                    if f.endswith(file_ext):
+                        matched_files.append(f)
+                        logger.info(f"找到潜在匹配文件: {f}")
+                
+                if matched_files:
+                    # 找到最近修改的文件作为默认选择
+                    latest_file = max(matched_files, key=lambda x: os.path.getmtime(os.path.join(downloads_dir, x)))
+                    logger.info(f"使用最近生成的文件: {latest_file}")
+                    file_path = os.path.join(downloads_dir, latest_file)
+                else:
+                    logger.error(f"无法找到匹配的文件")
+                    raise HTTPException(status_code=404, detail="文件不存在")
+            else:
+                logger.error(f"目录不存在: {downloads_dir}")
+                raise HTTPException(status_code=404, detail="文件不存在")
     
     # 根据文件类型设置适当的媒体类型
     media_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -226,6 +324,10 @@ async def preview_file(file_name: str):
         media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     elif file_name.endswith(".pdf"):
         media_type = "application/pdf"
+    
+    # 获取实际文件名用于响应头
+    actual_filename = os.path.basename(file_path)
+    logger.info(f"准备预览文件: {actual_filename}")
     
     return FileResponse(
         path=file_path,
@@ -235,7 +337,8 @@ async def preview_file(file_name: str):
 @router.post("/advanced-documents/", response_model=DocumentResponse)
 async def create_advanced_document(
     request: AdvancedDocumentRequest, 
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    document_controller: DocumentController = Depends(get_document_controller)
 ):
     """
     创建新的高级文档生成任务，支持页面/章节限制和自定义内容
@@ -244,39 +347,7 @@ async def create_advanced_document(
     if request.doc_type not in ["ppt", "word", "pdf"]:
         raise HTTPException(status_code=400, detail="Invalid document type")
     
-    # 生成唯一ID
-    doc_id = str(uuid.uuid4())
-    
-    # 创建初始响应
-    response = DocumentResponse(
-        id=doc_id,
-        topic=request.topic,
-        doc_type=request.doc_type,
-        status="queued",
-        created_at=datetime.now().isoformat()
-    )
-    
-    # 存储任务状态
-    generation_tasks[doc_id] = {
-        "status": "queued",
-        "progress": 0.0,
-        "message": "高级任务已加入队列"
-    }
-    
-    # 添加后台任务
-    background_tasks.add_task(
-        generate_advanced_document_background, 
-        doc_id, 
-        request.topic, 
-        request.doc_type,
-        request.additional_info,
-        request.template_id,
-        request.ai_service_type,
-        request.max_pages,
-        request.detailed_content
-    )
-    
-    return response
+    return await document_controller.create_advanced_document(request, background_tasks)
 
 async def generate_document_background(
     doc_id: str, 

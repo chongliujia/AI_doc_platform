@@ -219,6 +219,23 @@ export default {
           }
         } catch (error) {
           console.error('获取状态失败', error);
+          
+          // 检查是否应该停止轮询
+          if (error.stopPolling || (error.response && error.response.status === 404)) {
+            clearInterval(this.statusCheckInterval);
+            this.progressMessage = '无法继续跟踪文档状态，可能文档已被删除或不存在。';
+            
+            // 如果有错误细节，显示出来
+            if (error.response && error.response.data && error.response.data.detail) {
+              this.progressMessage += ' ' + error.response.data.detail;
+            }
+            
+            // 更新文档状态为失败
+            this.document.status = 'failed';
+            localStorage.setItem('currentDocument', JSON.stringify(this.document));
+            
+            console.warn('已停止轮询文档状态', documentId);
+          }
         }
       }, 2000);
     },

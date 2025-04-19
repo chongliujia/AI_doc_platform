@@ -1,5 +1,6 @@
 import logging
 from typing import Dict, Any, Optional, List
+import re  # 将re模块导入移到文件顶部
 
 from .ai_client import AIClient
 
@@ -22,7 +23,7 @@ class ContentGenerator:
         self.ai_client = ai_client
         logger.info("内容生成器初始化完成")
     
-    def generate_section_content(self, topic: str, section_title: str, doc_type: str) -> str:
+    def generate_section_content(self, topic: str, section_title: str, doc_type: str, additional_prompt: Optional[str] = None) -> str:
         """
         生成文档章节内容
         
@@ -30,15 +31,18 @@ class ContentGenerator:
             topic: 文档主题
             section_title: 章节标题
             doc_type: 文档类型 (ppt, word, pdf)
+            additional_prompt: 附加提示词
             
         Returns:
             章节内容
         """
         try:
             logger.info(f"开始为章节 '{section_title}' 生成内容 (主题: {topic}, 类型: {doc_type})")
+            if additional_prompt:
+                logger.info(f"附加提示词: {additional_prompt[:100]}...")
             
             # 构建提示
-            prompt = self._build_section_prompt(topic, section_title, doc_type)
+            prompt = self._build_section_prompt(topic, section_title, doc_type, additional_prompt)
             
             # 调用AI客户端
             messages = [
@@ -69,7 +73,7 @@ class ContentGenerator:
             logger.error(f"生成章节内容时出错: {str(e)}")
             return self._get_mock_section_content(topic, section_title)
     
-    def generate_slide_content(self, topic: str, section_title: str, slide_title: str, slide_type: str) -> Dict[str, Any]:
+    def generate_slide_content(self, topic: str, section_title: str, slide_title: str, slide_type: str, additional_prompt: Optional[str] = None) -> Dict[str, Any]:
         """
         生成幻灯片内容
         
@@ -78,15 +82,18 @@ class ContentGenerator:
             section_title: 章节标题
             slide_title: 幻灯片标题
             slide_type: 幻灯片类型 (content, two_column, image_content)
+            additional_prompt: 附加提示词
             
         Returns:
             幻灯片内容
         """
         try:
             logger.info(f"开始为幻灯片 '{slide_title}' 生成内容 (章节: {section_title}, 类型: {slide_type})")
+            if additional_prompt:
+                logger.info(f"附加提示词: {additional_prompt[:100]}...")
             
             # 构建提示
-            prompt = self._build_slide_prompt(topic, section_title, slide_title, slide_type)
+            prompt = self._build_slide_prompt(topic, section_title, slide_title, slide_type, additional_prompt)
             
             # 调用AI客户端
             messages = [
@@ -133,7 +140,7 @@ class ContentGenerator:
             logger.error(f"生成幻灯片内容时出错: {str(e)}")
             return self._get_mock_slide_content(slide_title, slide_type)
     
-    def _build_section_prompt(self, topic: str, section_title: str, doc_type: str) -> str:
+    def _build_section_prompt(self, topic: str, section_title: str, doc_type: str, additional_prompt: Optional[str] = None) -> str:
         """
         构建生成章节内容的提示
         
@@ -141,12 +148,14 @@ class ContentGenerator:
             topic: 文档主题
             section_title: 章节标题
             doc_type: 文档类型
+            additional_prompt: 附加提示词
             
         Returns:
             提示文本
         """
+        base_prompt = ""
         if doc_type == "ppt":
-            return f"""
+            base_prompt = f"""
             请为主题"{topic}"中的章节"{section_title}"生成详细的内容。
             
             要求:
@@ -155,11 +164,9 @@ class ContentGenerator:
             3. 使用清晰的结构和逻辑
             4. 适合PPT演示的简洁表达
             5. 内容长度适中，约500-800字
-            
-            请直接返回内容，不需要额外的格式或标记。
             """
         else:
-            return f"""
+            base_prompt = f"""
             请为主题"{topic}"中的章节"{section_title}"生成详细的内容。
             
             要求:
@@ -168,11 +175,19 @@ class ContentGenerator:
             3. 使用清晰的结构和逻辑
             4. 适合学术或专业文档的正式表达
             5. 内容长度适中，约1000-1500字
+            """
             
+        # 添加附加提示词
+        if additional_prompt:
+            base_prompt += f"\n\n附加要求:\n{additional_prompt}\n"
+            
+        base_prompt += """
             请直接返回内容，不需要额外的格式或标记。
             """
+            
+        return base_prompt
     
-    def _build_slide_prompt(self, topic: str, section_title: str, slide_title: str, slide_type: str) -> str:
+    def _build_slide_prompt(self, topic: str, section_title: str, slide_title: str, slide_type: str, additional_prompt: Optional[str] = None) -> str:
         """
         构建生成幻灯片内容的提示
         
@@ -181,6 +196,7 @@ class ContentGenerator:
             section_title: 章节标题
             slide_title: 幻灯片标题
             slide_type: 幻灯片类型
+            additional_prompt: 附加提示词
             
         Returns:
             提示文本
@@ -191,13 +207,47 @@ class ContentGenerator:
         幻灯片类型: {slide_type}
         """
         
+        type_specific_prompt = ""
         if slide_type == "content":
-            return base_prompt + """
+            type_specific_prompt = """
             要求:
             1. 创建3-5个简洁的要点
             2. 每个要点包含一个主要观点和1-2个支持细节
             3. 内容应该简洁明了，适合PPT展示
+            """
+        elif slide_type == "two_column":
+            type_specific_prompt = """
+            要求:
+            1. 创建左右两列内容
+            2. 每列包含2-3个要点
+            3. 每个要点包含一个主要观点和1-2个支持细节
+            """
+        else:  # image_content
+            type_specific_prompt = """
+            要求:
+            1. 创建3-4个要点，描述与图片相关的内容
+            2. 每个要点包含一个主要观点和1-2个支持细节
+            3. 添加一个图片描述，用于检索相关图片
+            4. 图片描述应该具体、明确、视觉化，适合通过关键词搜索找到合适的图片
+            5. 图片描述应该是5-15个单词，应专注于描述视觉元素而不是抽象概念
+            6. 图片描述应该包含主题、动作、背景等关键元素
+            7. 避免使用太过抽象或难以可视化的描述词
             
+            图片描述示例:
+            - "商务人士在会议室讨论图表"
+            - "森林中的清澈小溪自然风景"
+            - "科学家在实验室使用显微镜"
+            - "城市摩天大楼鸟瞰图，日落时分"
+            """
+            
+        # 添加附加提示词
+        if additional_prompt:
+            type_specific_prompt += f"\n附加要求:\n{additional_prompt}\n"
+            
+        # 添加JSON格式输出要求
+        json_format = ""
+        if slide_type == "content":
+            json_format = """
             请以JSON格式返回，格式如下:
             {
                 "points": [
@@ -210,12 +260,7 @@ class ContentGenerator:
             }
             """
         elif slide_type == "two_column":
-            return base_prompt + """
-            要求:
-            1. 创建左右两列内容
-            2. 每列包含2-3个要点
-            3. 每个要点包含一个主要观点和1-2个支持细节
-            
+            json_format = """
             请以JSON格式返回，格式如下:
             {
                 "left_points": [
@@ -235,12 +280,7 @@ class ContentGenerator:
             }
             """
         else:  # image_content
-            return base_prompt + """
-            要求:
-            1. 创建3-4个要点，描述与图片相关的内容
-            2. 每个要点包含一个主要观点和1-2个支持细节
-            3. 添加一个图片描述，说明应该使用什么样的图片
-            
+            json_format = """
             请以JSON格式返回，格式如下:
             {
                 "points": [
@@ -250,13 +290,17 @@ class ContentGenerator:
                     },
                     ...
                 ],
-                "image_description": "图片应该展示..."
+                "image_description": "具体、详细的图片描述，5-15个单词"
             }
             """
+            
+        # 组合提示
+        full_prompt = f"{base_prompt}\n\n{type_specific_prompt}\n\n{json_format}"
+        return full_prompt.strip()
     
     def _parse_slide_content(self, content: str, slide_title: str, slide_type: str) -> Dict[str, Any]:
         """
-        解析幻灯片内容
+        解析从AI生成的幻灯片内容
         
         Args:
             content: 生成的内容
@@ -264,122 +308,246 @@ class ContentGenerator:
             slide_type: 幻灯片类型
             
         Returns:
-            解析后的幻灯片内容
+            解析后的内容
         """
         try:
+            # 提取JSON部分
             import json
-            import re
             
-            # 尝试提取JSON部分
-            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            # 先清理可能的注释
+            content = re.sub(r'//.*?\n', '\n', content)
+            
+            # 1. 尝试提取带有三个反引号的Markdown代码块
+            json_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", content, re.DOTALL)
             if json_match:
-                try:
-                    slide_content = json.loads(json_match.group(0))
-                    
-                    # 验证内容格式
-                    if slide_type == "content" and "points" in slide_content:
-                        return slide_content
-                    elif slide_type == "two_column" and "left_points" in slide_content and "right_points" in slide_content:
-                        return slide_content
-                    elif slide_type == "image_content" and "points" in slide_content:
-                        if "image_description" not in slide_content:
-                            slide_content["image_description"] = f"关于{slide_title}的图示"
-                        return slide_content
-                except json.JSONDecodeError:
-                    pass
-            
-            # 如果JSON解析失败，尝试从文本中提取内容
-            if slide_type == "content":
-                points = self._extract_points_from_text(content)
-                return {"points": points}
-            elif slide_type == "two_column":
-                # 尝试分割内容为左右两部分
-                parts = content.split("右侧", 1)
-                if len(parts) == 2:
-                    left_points = self._extract_points_from_text(parts[0])
-                    right_points = self._extract_points_from_text("右侧" + parts[1])
+                json_str = json_match.group(1).strip()
+                logger.info(f"从Markdown代码块提取到内容: {json_str[:50]}...")
+            else:
+                # 2. 如果没有Markdown格式，直接尝试提取JSON对象
+                object_match = re.search(r"(\{[\s\S]*\})", content, re.DOTALL)
+                if object_match:
+                    json_str = object_match.group(1)
+                    logger.info(f"从文本中提取到JSON对象: {json_str[:50]}...")
                 else:
-                    # 如果无法分割，则平均分配要点
-                    all_points = self._extract_points_from_text(content)
-                    mid = len(all_points) // 2
-                    left_points = all_points[:mid]
-                    right_points = all_points[mid:]
+                    # 如果仍然找不到，使用整个内容作为基础进行解析
+                    json_str = content
+                    logger.info("未找到JSON对象，将使用整个内容进行处理")
+            
+            # 尝试清理和解析JSON
+            try:
+                # 1. 确保json_str是一个完整的JSON对象
+                if not (json_str.startswith('{') and json_str.endswith('}')):
+                    # 如果不是完整JSON，尝试提取
+                    object_match = re.search(r"(\{[\s\S]*\})", json_str, re.DOTALL)
+                    if object_match:
+                        json_str = object_match.group(1)
                 
-                return {
-                    "left_points": left_points,
-                    "right_points": right_points
-                }
-            else:  # image_content
+                # 2. 清理JSON字符串
+                # 移除多余的逗号
+                cleaned_json = re.sub(r',\s*}', '}', json_str)
+                cleaned_json = re.sub(r',\s*]', ']', cleaned_json)
+                
+                # 修复可能的引号问题
+                cleaned_json = cleaned_json.replace("'", '"')
+                
+                # 修复可能的尾部逗号问题 - 常见的JSON解析错误
+                cleaned_json = re.sub(r',(\s*[\]}])', r'\1', cleaned_json)
+                
+                # 修复没有双引号的键
+                cleaned_json = re.sub(r'(\{|\,)\s*([a-zA-Z0-9_]+)\s*:', r'\1"\2":', cleaned_json)
+                
+                logger.info(f"尝试解析清理后的JSON: {cleaned_json[:50]}...")
+                
+                # 3. 解析JSON
+                parsed = json.loads(cleaned_json)
+                
+                # 验证和处理JSON数据
+                if slide_type == "image_content" and "image_description" in parsed:
+                    # 优化图片描述用于搜索
+                    image_desc = parsed["image_description"]
+                    image_desc = re.sub(r'["\'\[\]\{\}]', '', image_desc)
+                    if len(image_desc.split()) > 15:
+                        image_desc = ' '.join(image_desc.split()[:15])
+                    parsed["image_description"] = image_desc
+                
+                return parsed
+            except json.JSONDecodeError as e:
+                # JSON解析失败，记录错误详情，但继续使用结构化提取
+                logger.warning(f"JSON解析失败 ({str(e)}): {cleaned_json[:100]}...，尝试结构化提取内容")
+            
+            # 如果JSON解析失败，使用结构化提取
+            result = {}
+            
+            if slide_type == "content" or slide_type == "image_content":
+                # 提取要点
                 points = self._extract_points_from_text(content)
+                result["points"] = points
                 
-                # 尝试提取图片描述
-                image_desc = ""
-                for line in content.split('\n'):
-                    if "图片" in line and ("描述" in line or "说明" in line):
-                        image_desc = line.split(":", 1)[-1].strip()
-                        break
+                # 如果是图片内容类型，还需要提取图片描述
+                if slide_type == "image_content":
+                    # 提取图片描述
+                    image_desc_match = re.search(r"(?:图片描述|image description)[：:]\s*(.*?)(?=\n|$)", content, re.IGNORECASE)
+                    
+                    if image_desc_match:
+                        # 处理图片描述以优化搜索
+                        image_desc = image_desc_match.group(1).strip()
+                        # 去除多余标点和格式
+                        image_desc = re.sub(r'["\'\[\]\{\}]', '', image_desc)
+                        # 如果描述很长，取前15个单词
+                        if len(image_desc.split()) > 15:
+                            image_desc = ' '.join(image_desc.split()[:15])
+                        result["image_description"] = image_desc
+                    else:
+                        # 如果没有找到图片描述，根据幻灯片标题和内容生成一个
+                        result["image_description"] = f"{slide_title}, {' '.join([p.get('main', '').split()[:3] for p in points[:1]])}"
                 
-                if not image_desc:
-                    image_desc = f"关于{slide_title}的图示"
+            elif slide_type == "two_column":
+                # 提取左右两列内容
+                left_points = []
+                right_points = []
                 
-                return {
-                    "points": points,
-                    "image_description": image_desc
-                }
+                # 检查是否有明确的左侧右侧标记
+                left_section = re.search(r"左[侧栏].*?(?=右[侧栏]|$)", content, re.DOTALL)
+                right_section = re.search(r"右[侧栏].*", content, re.DOTALL)
                 
+                if left_section and right_section:
+                    left_points = self._extract_points_from_text(left_section.group(0))
+                    right_points = self._extract_points_from_text(right_section.group(0))
+                else:
+                    # 如果没有明确标记，尝试将内容平均分配
+                    all_points = self._extract_points_from_text(content)
+                    mid_point = len(all_points) // 2
+                    left_points = all_points[:mid_point + (1 if len(all_points) % 2 else 0)]
+                    right_points = all_points[mid_point + (1 if len(all_points) % 2 else 0):]
+                
+                result["left_points"] = left_points
+                result["right_points"] = right_points
+            
+            return result
+            
         except Exception as e:
             logger.error(f"解析幻灯片内容时出错: {str(e)}")
-            return self._get_mock_slide_content(slide_title, slide_type)
+            
+            # 返回默认内容
+            if slide_type == "content":
+                return {"points": [{"main": "未能解析内容", "details": ["请参考其他资料"]}]}
+            elif slide_type == "two_column":
+                return {
+                    "left_points": [{"main": "左侧要点", "details": ["请参考其他资料"]}],
+                    "right_points": [{"main": "右侧要点", "details": ["请参考其他资料"]}]
+                }
+            else:  # image_content
+                return {
+                    "points": [{"main": "未能解析内容", "details": ["请参考其他资料"]}],
+                    "image_description": slide_title  # 使用幻灯片标题作为图片描述
+                }
     
     def _extract_points_from_text(self, text: str) -> List[Dict[str, Any]]:
         """
-        从文本中提取要点
+        从文本中提取要点和详情
         
         Args:
-            text: 文本内容
+            text: 提取要点的文本
             
         Returns:
-            要点列表
+            要点列表，每个要点包含main和details字段
         """
         points = []
-        current_main = None
+        current_point = None
         current_details = []
         
-        for line in text.split('\n'):
+        # 确保是文本
+        if not isinstance(text, str):
+            logger.warning(f"无效的文本类型: {type(text)}")
+            return [{"main": "无效内容", "details": ["请参考其他资料"]}]
+        
+        # 清理文本，去除可能的代码块标记
+        clean_text = re.sub(r'```.*?```', '', text, flags=re.DOTALL)
+        
+        # 按行拆分
+        lines = clean_text.split('\n')
+        
+        for line in lines:
             line = line.strip()
             if not line:
                 continue
+                
+            # 检查是否是主要要点（使用更强的匹配模式）
+            main_point_match = re.search(r'^(?:\d+\.|\*|\-|\•|\○|\◆|\★|\◇|\→|\》|[A-Z]\.)\s*(.+)$', line)
             
-            # 检查是否是主要要点（通常以数字、项目符号或关键词开头）
-            if re.match(r'^(\d+\.|\-|\*|\•|\○|\◆|要点|关键点|主要|首先|其次|再次|最后)', line):
-                # 如果已有要点，保存它
-                if current_main:
+            if main_point_match:
+                # 如果已有要点，保存当前要点
+                if current_point:
                     points.append({
-                        "main": current_main,
+                        "main": current_point,
                         "details": current_details
                     })
+                    current_details = []
                 
-                # 开始新的要点
-                current_main = re.sub(r'^(\d+\.|\-|\*|\•|\○|\◆|要点|关键点|主要|首先|其次|再次|最后)\s*', '', line)
-                current_details = []
-            elif current_main and line.startswith(('  ', '\t')):
-                # 这是一个细节（缩进的行）
-                current_details.append(line.strip())
-            elif current_main:
-                # 如果不是明显的细节但已有主要要点，也视为细节
-                current_details.append(line)
+                # 设置新的要点
+                current_point = main_point_match.group(1)
+            elif current_point:
+                # 子要点或详情
+                detail_match = re.search(r'^(?:  |\t)(?:\d+\.|\*|\-|\•|\○|\◇|\→|\》|[a-z]\.)\s*(.+)$', line)
+                if detail_match:
+                    current_details.append(detail_match.group(1))
+                else:
+                    # 可能是要点的继续
+                    # 检查是否是以某些特定词语开头，这通常表示这是一个新的要点
+                    new_point_indicators = ['首先', '其次', '再次', '此外', '最后', '总之', '另外', '第一', '第二', '第三', '第四']
+                    
+                    is_new_point = False
+                    for indicator in new_point_indicators:
+                        if line.startswith(indicator):
+                            is_new_point = True
+                            break
+                            
+                    if is_new_point:
+                        # 保存当前要点
+                        if current_point:
+                            points.append({
+                                "main": current_point,
+                                "details": current_details
+                            })
+                            current_details = []
+                        
+                        # 设置新的要点
+                        current_point = line
+                    elif line and len(line) > 5:  # 忽略太短的行
+                        # 将这行作为详情添加
+                        current_details.append(line)
         
         # 添加最后一个要点
-        if current_main:
+        if current_point:
             points.append({
-                "main": current_main,
+                "main": current_point,
                 "details": current_details
             })
-        
-        # 如果没有提取到要点，创建一个默认要点
+            
+        # 如果没有提取到要点，尝试使用其他方法
         if not points:
-            points = [{"main": "重要信息", "details": [text[:100] + "..."]}]
+            # 尝试直接按段落拆分
+            paragraphs = [p.strip() for p in re.split(r'\n\s*\n', clean_text) if p.strip()]
+            
+            for para in paragraphs:
+                if len(para) > 10:  # 忽略太短的段落
+                    # 将段落的第一句作为主要内容
+                    sentences = re.split(r'[.。!！?？]', para)
+                    if sentences:
+                        main = sentences[0].strip()
+                        details = []
+                        if len(sentences) > 1:
+                            details = [s.strip() for s in sentences[1:] if s.strip()]
+                        
+                        points.append({
+                            "main": main,
+                            "details": details
+                        })
         
+        # 如果仍然没有内容，返回默认内容
+        if not points:
+            points = [{"main": "未能提取要点", "details": ["请参考其他资料"]}]
+            
         return points
     
     def _get_mock_section_content(self, topic: str, section_title: str) -> str:

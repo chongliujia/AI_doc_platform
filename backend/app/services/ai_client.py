@@ -5,6 +5,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from tenacity import retry, stop_after_attempt, wait_exponential
 from abc import ABC, abstractmethod
+import re
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -61,12 +62,12 @@ class AIClient(ABC):
             logger.info(f"请求参数: temperature={temperature}, max_tokens={max_tokens}")
             logger.info(f"请求消息: {messages[-1]['content'][:100]}..." if messages else "无消息")
             
-            # 增加超时时间到120秒
+            # 增加超时时间到180秒
             response = requests.post(
                 self.api_endpoint,
                 headers=self.headers,
                 json=payload,
-                timeout=120
+                timeout=180
             )
             
             logger.info(f"API响应状态码: {response.status_code}")
@@ -109,7 +110,6 @@ class AIClient(ABC):
         """
         pass
     
-    @abstractmethod
     def extract_response_content(self, response: Dict[str, Any]) -> Optional[str]:
         """
         从API响应中提取内容
@@ -120,4 +120,23 @@ class AIClient(ABC):
         Returns:
             提取的内容，如果提取失败则返回None
         """
-        pass 
+        try:
+            if "choices" in response and response["choices"] and len(response["choices"]) > 0:
+                content = response["choices"][0].get("message", {}).get("content", "")
+                
+                # 记录原始内容
+                content_preview = content.replace('\n', ' ')[:100] + "..." if len(content) > 100 else content
+                logger.info(f"提取的原始内容: {content_preview}")
+                
+                # 检查内容是否包含Markdown代码块
+                code_blocks = re.findall(r"```(?:json)?[\s\S]*?```", content)
+                if code_blocks:
+                    logger.info(f"内容包含 {len(code_blocks)} 个代码块")
+                    
+                return content
+            
+            logger.warning("响应中未找到有效内容")
+            return None
+        except Exception as e:
+            logger.error(f"提取内容时出错: {str(e)}")
+            return None 

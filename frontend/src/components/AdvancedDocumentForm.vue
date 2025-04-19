@@ -19,6 +19,7 @@
         <select id="docType" v-model="docType" required @change="updatePlaceholders">
           <option value="ppt">PPT演示文稿</option>
           <option value="word">Word文档</option>
+          <option value="pdf">PDF文档</option>
         </select>
       </div>
       
@@ -41,6 +42,14 @@
           placeholder="输入任何额外的要求或信息"
           rows="3"
         ></textarea>
+      </div>
+      
+      <div class="form-group">
+        <label for="aiServiceType">AI服务类型 (可选)</label>
+        <select id="aiServiceType" v-model="aiServiceType">
+          <option value="deepseek">DeepSeek</option>
+          <option value="openai">OpenAI</option>
+        </select>
       </div>
       
       <!-- 自定义内容部分 -->
@@ -94,8 +103,8 @@
         <button type="button" class="btn secondary" @click="$emit('switch-mode')">
           切换到基础模式
         </button>
-        <button type="submit" class="btn primary" :disabled="submitting">
-          {{ submitting ? '生成中...' : '生成文档' }}
+        <button type="button" class="btn preview" @click="previewOutline" :disabled="submitting">
+          <i class="fa fa-list-ul"></i> 预览大纲并继续
         </button>
       </div>
     </form>
@@ -121,7 +130,8 @@ export default {
         { id: 'business', name: '商务模板' },
         { id: 'academic', name: '学术模板' },
         { id: 'creative', name: '创意模板' }
-      ]
+      ],
+      aiServiceType: 'deepseek'
     };
   },
   methods: {
@@ -167,7 +177,8 @@ export default {
           template_id: this.templateId,
           max_pages: this.maxPages,
           detailed_content: this.detailedContent.length > 0 ? this.detailedContent : null,
-          is_advanced_mode: true
+          is_advanced_mode: true,
+          ai_service_type: this.aiServiceType
         };
         
         // 调用Vuex action
@@ -180,6 +191,34 @@ export default {
       } catch (error) {
         this.error = '创建文档时出错，请重试';
         console.error('Submit error:', error);
+      } finally {
+        this.submitting = false;
+      }
+    },
+    
+    async previewOutline() {
+      if (!this.topic) {
+        this.error = '请输入文档主题';
+        return;
+      }
+      
+      this.submitting = true;
+      this.error = null;
+      
+      try {
+        // 导航到大纲预览页面，并传递表单数据
+        this.$router.push({
+          path: '/outline-preview',
+          query: {
+            topic: this.topic,
+            docType: this.docType,
+            additionalInfo: this.additionalInfo,
+            aiServiceType: this.aiServiceType
+          }
+        });
+      } catch (error) {
+        this.error = '创建大纲预览时出错，请重试';
+        console.error('Preview error:', error);
       } finally {
         this.submitting = false;
       }
@@ -284,15 +323,17 @@ input, select, textarea {
 .form-actions {
   display: flex;
   justify-content: space-between;
-  margin-top: 30px;
+  gap: 10px;
+  margin-top: 20px;
 }
 
 .btn {
-  padding: 12px 20px;
+  padding: 10px 15px;
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 16px;
+  font-weight: bold;
+  flex: 1;
 }
 
 .primary {
@@ -301,8 +342,15 @@ input, select, textarea {
 }
 
 .secondary {
-  background-color: #f0f0f0;
-  color: #333;
+  background-color: #757575;
+  color: white;
+}
+
+.preview {
+  background-color: #4CAF50;
+  color: white;
+  flex: 1.5;
+  font-weight: bold;
 }
 
 button:disabled {

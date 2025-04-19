@@ -4,6 +4,7 @@ import Home from '../views/Home.vue';
 import Generate from '../views/Generate.vue';
 import Results from '../views/Results.vue';
 import History from '../views/History.vue';
+import OutlinePreview from '../views/OutlinePreview.vue';
 
 Vue.use(VueRouter);
 
@@ -27,6 +28,11 @@ const routes = [
     path: '/history',
     name: 'History',
     component: History
+  },
+  {
+    path: '/outline-preview',
+    name: 'OutlinePreview',
+    component: OutlinePreview
   }
 ];
 

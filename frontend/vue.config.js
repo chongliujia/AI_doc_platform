@@ -1,3 +1,4 @@
 module.exports = {
-  lintOnSave: false
+  lintOnSave: false,
+  transpileDependencies: ['vuedraggable', 'vue-toast-notification']
 } 

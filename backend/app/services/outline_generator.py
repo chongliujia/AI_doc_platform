@@ -24,22 +24,25 @@ class OutlineGenerator:
         self.ai_client = ai_client
         logger.info("大纲生成器初始化完成")
     
-    def generate_document_outline(self, topic: str, doc_type: str) -> Optional[List[Dict[str, Any]]]:
+    def generate_document_outline(self, topic: str, doc_type: str, additional_prompt: Optional[str] = None) -> Optional[List[Dict[str, Any]]]:
         """
         生成文档大纲
         
         Args:
             topic: 文档主题
             doc_type: 文档类型 (ppt, word, pdf)
+            additional_prompt: 附加提示词，用于自定义大纲生成过程
             
         Returns:
             文档大纲，如果生成失败则返回None
         """
         try:
             logger.info(f"开始为主题 '{topic}' 生成 {doc_type} 类型的文档大纲")
+            if additional_prompt:
+                logger.info(f"附加提示词: {additional_prompt[:100]}...")
             
             # 1. 首先生成主要章节
-            main_sections = self._generate_main_sections(topic, doc_type)
+            main_sections = self._generate_main_sections(topic, doc_type, additional_prompt)
             if not main_sections:
                 logger.error(f"生成主要章节失败: 主题={topic}, 类型={doc_type}")
                 return None
@@ -54,7 +57,7 @@ class OutlineGenerator:
                 section_title = section.get("title", "")
                 logger.info(f"为章节 '{section_title}' 生成详细内容")
                 
-                section_detail = self._generate_section_detail(topic, section, doc_type)
+                section_detail = self._generate_section_detail(topic, section, doc_type, additional_prompt)
                 if section_detail:
                     outline.append(section_detail)
                     
@@ -81,20 +84,21 @@ class OutlineGenerator:
             logger.error(f"生成大纲时出错: {str(e)}")
             return None
     
-    def _generate_main_sections(self, topic: str, doc_type: str) -> Optional[List[Dict[str, Any]]]:
+    def _generate_main_sections(self, topic: str, doc_type: str, additional_prompt: Optional[str] = None) -> Optional[List[Dict[str, Any]]]:
         """
         生成文档的主要章节
         
         Args:
             topic: 文档主题
             doc_type: 文档类型
+            additional_prompt: 附加提示词
             
         Returns:
             主要章节列表，如果生成失败则返回None
         """
         try:
             # 构建提示
-            prompt = self._build_main_sections_prompt(topic, doc_type)
+            prompt = self._build_main_sections_prompt(topic, doc_type, additional_prompt)
             
             # 调用AI客户端
             messages = [
@@ -122,7 +126,7 @@ class OutlineGenerator:
             logger.error(f"生成主要章节时出错: {str(e)}")
             return self._get_mock_main_sections(topic, doc_type)
     
-    def _generate_section_detail(self, topic: str, section: Dict[str, Any], doc_type: str) -> Optional[Dict[str, Any]]:
+    def _generate_section_detail(self, topic: str, section: Dict[str, Any], doc_type: str, additional_prompt: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         为章节生成详细内容
         
@@ -130,6 +134,7 @@ class OutlineGenerator:
             topic: 文档主题
             section: 章节信息
             doc_type: 文档类型
+            additional_prompt: 附加提示词
             
         Returns:
             详细的章节信息，如果生成失败则返回None
@@ -140,7 +145,7 @@ class OutlineGenerator:
                 return None
             
             # 构建提示
-            prompt = self._build_section_detail_prompt(topic, section_title, doc_type)
+            prompt = self._build_section_detail_prompt(topic, section_title, doc_type, additional_prompt)
             
             # 调用AI客户端
             messages = [
@@ -175,55 +180,57 @@ class OutlineGenerator:
             logger.error(f"生成章节详情时出错: {str(e)}")
             return self._get_mock_section_detail(section, doc_type)
     
-    def _build_main_sections_prompt(self, topic: str, doc_type: str) -> str:
+    def _build_main_sections_prompt(self, topic: str, doc_type: str, additional_prompt: Optional[str] = None) -> str:
         """
         构建生成主要章节的提示
         
         Args:
             topic: 文档主题
             doc_type: 文档类型
+            additional_prompt: 附加提示词
             
         Returns:
             提示文本
         """
+        base_prompt = ""
         if doc_type == "ppt":
-            return f"""
+            base_prompt = f"""
             请为主题"{topic}"创建一个PPT演示文稿的主要章节列表。
             
             要求:
             1. 创建5-7个主要章节
             2. 每个章节应该是主题的一个重要方面
             3. 章节应该有逻辑顺序，从介绍到结论
-            
-            请以JSON格式返回，格式如下:
-            [
-                {{"title": "章节1标题"}},
-                {{"title": "章节2标题"}},
-                ...
-            ]
-            
-            确保JSON格式正确，可以直接解析。
             """
         else:
-            return f"""
+            base_prompt = f"""
             请为主题"{topic}"创建一个文档的主要章节列表。
             
             要求:
             1. 创建5-7个主要章节
             2. 每个章节应该是主题的一个重要方面
             3. 章节应该有逻辑顺序，从介绍到结论
+            """
             
+        # 添加附加提示词
+        if additional_prompt:
+            base_prompt += f"\n\n附加要求:\n{additional_prompt}\n"
+            
+        # 添加JSON格式输出要求
+        base_prompt += """
             请以JSON格式返回，格式如下:
             [
-                {{"title": "章节1标题"}},
-                {{"title": "章节2标题"}},
+                {"title": "章节1标题"},
+                {"title": "章节2标题"},
                 ...
             ]
             
             确保JSON格式正确，可以直接解析。
             """
+            
+        return base_prompt
     
-    def _build_section_detail_prompt(self, topic: str, section_title: str, doc_type: str) -> str:
+    def _build_section_detail_prompt(self, topic: str, section_title: str, doc_type: str, additional_prompt: Optional[str] = None) -> str:
         """
         构建生成章节详情的提示
         
@@ -231,56 +238,70 @@ class OutlineGenerator:
             topic: 文档主题
             section_title: 章节标题
             doc_type: 文档类型
+            additional_prompt: 附加提示词
             
         Returns:
             提示文本
         """
+        base_prompt = ""
         if doc_type == "ppt":
-            return f"""
+            base_prompt = f"""
             请为主题"{topic}"中的章节"{section_title}"创建详细的PPT幻灯片内容。
             
             要求:
             1. 创建3-5个幻灯片
             2. 每个幻灯片应该有一个标题和类型
             3. 类型可以是"content"(普通内容)、"two_column"(两列内容)或"image_content"(带图片的内容)
+            """
+        else:
+            base_prompt = f"""
+            请为主题"{topic}"中的章节"{section_title}"创建详细的子章节内容。
             
+            要求:
+            1. 创建3-5个子章节
+            2. 每个子章节应该详细探讨章节的一个方面
+            3. 子章节应该有逻辑连贯性
+            """
+            
+        # 添加附加提示词
+        if additional_prompt:
+            base_prompt += f"\n\n附加要求:\n{additional_prompt}\n"
+        
+        # 添加JSON格式输出要求
+        if doc_type == "ppt":
+            base_prompt += """
             请以JSON格式返回，格式如下:
             [
-                {{
+                {
                     "title": "幻灯片1标题",
                     "type": "content"
-                }},
-                {{
+                },
+                {
                     "title": "幻灯片2标题",
                     "type": "two_column"
-                }},
+                },
                 ...
             ]
             
             确保JSON格式正确，可以直接解析。
             """
         else:
-            return f"""
-            请为主题"{topic}"中的章节"{section_title}"创建详细的子章节列表。
-            
-            要求:
-            1. 创建3-5个子章节
-            2. 每个子章节应该是章节的一个重要方面
-            3. 子章节应该有逻辑顺序
-            
+            base_prompt += """
             请以JSON格式返回，格式如下:
             [
-                {{
+                {
                     "title": "子章节1标题"
-                }},
-                {{
+                },
+                {
                     "title": "子章节2标题"
-                }},
+                },
                 ...
             ]
             
             确保JSON格式正确，可以直接解析。
             """
+            
+        return base_prompt
     
     def _extract_sections_from_text(self, text: str) -> List[Dict[str, str]]:
         """

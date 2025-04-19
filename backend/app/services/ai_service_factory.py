@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional
 
 from .ai_service_interface import AIServiceInterface
 from .deepseek_service import DeepSeekService
+from .image_service import ImageService
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -53,4 +54,15 @@ class AIServiceFactory:
         Returns:
             默认的AI服务实例
         """
-        return cls.create_service("deepseek") 
+        return cls.create_service("deepseek")
+        
+    @classmethod
+    def get_image_service(cls) -> ImageService:
+        """
+        获取图片服务实例
+        
+        Returns:
+            图片服务实例
+        """
+        logger.info("创建图片服务")
+        return ImageService() 

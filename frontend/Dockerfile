@@ -1,51 +1,41 @@
-FROM ubuntu:20.04 as build-stage
+# 构建阶段
+FROM registry.npmmirror.com/node:16 as build-stage
 
 WORKDIR /app
 
-# 安装Node.js和npm
-RUN apt-get update && \
-    apt-get install -y curl && \
-    curl -fsSL https://deb.nodesource.com/setup_16.x | bash - && \
-    apt-get install -y nodejs && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+# 设置npm镜像
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+ENV NPM_CONFIG_REGISTRY=${NPM_REGISTRY}
 
-# 利用Docker的缓存机制
+# 设置环境变量
+ARG NODE_ENV=production
+ENV NODE_ENV=${NODE_ENV}
+ARG NODE_OPTIONS=--max-old-space-size=2048
+ENV NODE_OPTIONS=${NODE_OPTIONS}
+
+# 复制package.json和package-lock.json
 COPY package*.json ./
+
+# 安装依赖
 RUN npm install
 
-# 复制必要的源代码文件
-COPY src ./src
-COPY vue.config.js ./
-COPY .env.* ./
-COPY .eslintrc.js ./
+# 复制项目文件
+COPY . .
 
 # 构建应用
 RUN npm run build
 
-# 生产环境使用nginx
-FROM ubuntu:20.04 as production-stage
+# 生产阶段
+FROM nginx:alpine
 
-# 安装nginx
-RUN apt-get update && \
-    apt-get install -y nginx && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+# 复制nginx配置
+COPY ./nginx/default.conf /etc/nginx/conf.d/default.conf
 
-# 从构建阶段复制构建产物
-COPY --from=build-stage /app/dist /var/www/html
+# 从构建阶段复制构建结果到nginx html目录
+COPY --from=build-stage /app/dist /usr/share/nginx/html
 
-# 创建默认nginx配置
-RUN echo 'server { \n\
-    listen 80; \n\
-    server_name localhost; \n\
-    \n\
-    location / { \n\
-        root /var/www/html; \n\
-        index index.html index.htm; \n\
-        try_files $uri $uri/ /index.html; \n\
-    } \n\
-}' > /etc/nginx/conf.d/default.conf
+# 确保文件夹权限正确
+RUN chmod -R 755 /usr/share/nginx/html
 
 EXPOSE 80
 

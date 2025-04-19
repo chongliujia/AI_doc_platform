@@ -8,8 +8,10 @@ from pptx.slide import Slide
 from pptx.text.text import TextFrame
 from pptx.enum.shapes import MSO_SHAPE
 import logging
+import re
 
 from .ai_service_factory import AIServiceFactory
+from .image_service import ImageService
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -40,8 +42,34 @@ class PPTGenerator:
         
         self.prs = None
         self.ai_service = AIServiceFactory.create_service(ai_service_type)
+        self.image_service = ImageService()
 
-    def generate(self, topic: str, outline: List[Dict[str, Any]], template_id: Optional[str] = None) -> Optional[str]:
+    def _sanitize_filename(self, name: str) -> str:
+        """
+        将主题名称转换为有效的文件名
+        
+        Args:
+            name: 原始主题名称
+            
+        Returns:
+            有效的文件名
+        """
+        # 移除不合法的文件名字符
+        # 移除特殊字符，保留字母、数字、空格和一些基本标点
+        sanitized = re.sub(r'[\\/*?:"<>|]', '', name)
+        # 移除换行符并替换多个空格为单个空格
+        sanitized = re.sub(r'\s+', ' ', sanitized.replace('\n', ' '))
+        # 限制长度
+        max_length = 100
+        if len(sanitized) > max_length:
+            # 如果太长，截断并添加提示
+            sanitized = sanitized[:max_length] + "..."
+        # 确保文件名不为空
+        if not sanitized.strip():
+            sanitized = "AI_presentation"
+        return sanitized.strip()
+
+    def generate(self, topic: str, outline: List[Dict[str, Any]], template_id: Optional[str] = None, max_pages: Optional[int] = None) -> Optional[str]:
         """
         生成PPT文档
         
@@ -49,17 +77,31 @@ class PPTGenerator:
             topic: 主题
             outline: 大纲内容
             template_id: 模板ID（现在不使用，保留参数以保持接口兼容）
+            max_pages: 限制生成的最大页数
         """
         try:
             logger.info(f"开始生成PPT: 主题='{topic}', 章节数={len(outline)}")
             if template_id:
                 logger.info(f"使用模板: {template_id}")
+            if max_pages:
+                logger.info(f"应用页数限制: 最大 {max_pages} 张幻灯片")
             
             # 创建新的演示文稿
             self.prs = Presentation()
             self.prs.slide_width = Inches(16)
             self.prs.slide_height = Inches(9)
             logger.info(f"创建新的演示文稿: 宽度={self.prs.slide_width}, 高度={self.prs.slide_height}")
+            
+            # 计算固定幻灯片数量（标题、目录和结束幻灯片）
+            fixed_slides = 3
+            
+            # 如果有页数限制，计算可用于章节内容的幻灯片数量
+            remaining_slides = None
+            if max_pages:
+                if max_pages <= fixed_slides:
+                    logger.warning(f"页数限制({max_pages})太小，至少需要{fixed_slides}张基本幻灯片，将使用最小值")
+                    max_pages = fixed_slides + 1
+                remaining_slides = max_pages - fixed_slides
             
             # 添加标题幻灯片
             logger.info("添加标题幻灯片")
@@ -68,6 +110,42 @@ class PPTGenerator:
             # 添加目录幻灯片
             logger.info("添加目录幻灯片")
             self._add_toc_slide(outline)
+            
+            # 计算章节标题幻灯片数量
+            section_title_slides = len(outline)
+            content_slides_count = 0
+            
+            # 如果有页数限制且章节标题幻灯片已经超过限制，裁剪章节
+            if max_pages and (section_title_slides + fixed_slides > max_pages):
+                # 我们需要至少保留一个章节
+                available_sections = max_pages - fixed_slides
+                if available_sections < 1:
+                    available_sections = 1
+                
+                logger.warning(f"章节数({len(outline)})超过可用页数限制，将裁剪至{available_sections}个章节")
+                outline = outline[:available_sections]
+                section_title_slides = len(outline)
+            
+            # 如果有页数限制，计算每个章节内容可用的幻灯片数量
+            available_content_slides = None
+            if max_pages:
+                available_content_slides = max_pages - fixed_slides - section_title_slides
+                if available_content_slides < len(outline):
+                    available_content_slides = len(outline)  # 确保每个章节至少有一张内容幻灯片
+                
+                logger.info(f"可用于内容的幻灯片数量: {available_content_slides} (总限制: {max_pages}, 已用: {fixed_slides + section_title_slides})")
+                
+                # 计算每个章节平均可用的幻灯片数量
+                slides_per_section = available_content_slides // len(outline)
+                remaining = available_content_slides % len(outline)
+                
+                # 分配给每个章节的幻灯片数量
+                section_slide_allocation = [slides_per_section] * len(outline)
+                # 将剩余的幻灯片分配给前面的章节
+                for i in range(remaining):
+                    section_slide_allocation[i] += 1
+                
+                logger.info(f"章节幻灯片分配: {section_slide_allocation}")
             
             # 处理每个章节
             total_slides = 2  # 已添加标题和目录幻灯片
@@ -81,25 +159,50 @@ class PPTGenerator:
                 
                 # 添加章节内容幻灯片
                 slides = section.get("slides", [])
+                
+                # 如果有页数限制，限制本章节的幻灯片数量
+                if max_pages and section_slide_allocation:
+                    allowed_slides = section_slide_allocation[section_index]
+                    if len(slides) > allowed_slides:
+                        logger.info(f"章节 '{section_title}' 幻灯片数量({len(slides)})超过分配值({allowed_slides})，将裁剪")
+                        slides = slides[:allowed_slides]
+                        
                 logger.info(f"  章节 '{section_title}' 包含 {len(slides)} 张幻灯片")
                 
                 for slide_index, slide_content in enumerate(slides):
+                    # 检查是否已达到总页数限制
+                    if max_pages and total_slides + 1 >= max_pages:  # +1 考虑最后的结束幻灯片
+                        logger.warning(f"已达到页数限制({max_pages})，停止添加更多幻灯片")
+                        break
+                        
                     slide_title = slide_content.get("title", "未知标题")
                     slide_type = slide_content.get("type", "content")
                     logger.info(f"  添加幻灯片 {slide_index+1}/{len(slides)}: '{slide_title}' (类型: {slide_type})")
                     self._add_content_slide(slide_content, topic, section_title)
                     total_slides += 1
+                    content_slides_count += 1
             
             # 添加结束幻灯片
             logger.info("添加结束幻灯片")
             self._add_ending_slide(topic)
             total_slides += 1
             
-            # 保存文件
-            output_path = os.path.join(self.output_dir, f"{topic}_presentation.pptx")
+            # 保存文件 - 使用安全的文件名
+            sanitized_topic = self._sanitize_filename(topic)
+            # 确保文件保存到 downloads 子目录
+            downloads_dir = os.path.join(self.output_dir, "downloads")
+            os.makedirs(downloads_dir, exist_ok=True)
+            output_path = os.path.join(downloads_dir, f"{sanitized_topic}_presentation.pptx")
+            logger.info(f"保存PPT文件: {output_path}")
             self.prs.save(output_path)
             
-            logger.info(f"PPT生成完成: 共 {total_slides} 张幻灯片, 保存至: {output_path}")
+            logger.info(f"PPT生成完成: 共 {total_slides} 张幻灯片 (包含内容幻灯片 {content_slides_count} 张), 保存至: {output_path}")
+            if max_pages:
+                logger.info(f"页数限制: {max_pages} 张, 实际生成: {total_slides} 张")
+            
+            # 清理临时文件
+            self.image_service.cleanup()
+            
             return output_path
             
         except Exception as e:
@@ -227,16 +330,40 @@ class PPTGenerator:
             self._add_points(text_content.text_frame, points)
             
             if slide_type == "image_content":
-                # 在这里我们只添加图片描述，实际项目中可以根据描述生成或选择图片
+                # 获取图片描述
                 image_desc = slide_content.get("image_description", "")
                 if image_desc:
-                    image_note = slide.shapes.add_textbox(
-                        Inches(9.5), Inches(3.5), Inches(5.5), Inches(1)
-                    )
-                    image_note.text_frame.text = f"[图片: {image_desc}]"
-                    p = image_note.text_frame.paragraphs[0]
-                    p.font.italic = True
-                    p.font.color.rgb = self.COLORS['secondary']
+                    # 使用图片服务获取图片
+                    image_path = self.image_service.get_image_for_slide(image_desc)
+                    
+                    if image_path and os.path.exists(image_path):
+                        try:
+                            # 添加图片到幻灯片
+                            slide.shapes.add_picture(
+                                image_path,
+                                Inches(9.5), Inches(2),  # 位置
+                                width=Inches(5.5)        # 宽度，高度自动按比例调整
+                            )
+                            logger.info(f"已添加图片到幻灯片 '{slide_title}'")
+                        except Exception as e:
+                            logger.error(f"添加图片时出错: {str(e)}")
+                            # 添加图片说明文本框
+                            image_note = slide.shapes.add_textbox(
+                                Inches(9.5), Inches(3.5), Inches(5.5), Inches(1)
+                            )
+                            image_note.text_frame.text = f"[图片: {image_desc}]"
+                            p = image_note.text_frame.paragraphs[0]
+                            p.font.italic = True
+                            p.font.color.rgb = self.COLORS['secondary']
+                    else:
+                        # 如果无法获取图片，添加图片说明文本框
+                        image_note = slide.shapes.add_textbox(
+                            Inches(9.5), Inches(3.5), Inches(5.5), Inches(1)
+                        )
+                        image_note.text_frame.text = f"[图片: {image_desc}]"
+                        p = image_note.text_frame.paragraphs[0]
+                        p.font.italic = True
+                        p.font.color.rgb = self.COLORS['secondary']
         
         # 添加注释
         if notes := content.get("notes"):

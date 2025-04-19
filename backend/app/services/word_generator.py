@@ -32,26 +32,28 @@ class WordGenerator:
         
         self.ai_service = AIServiceFactory.create_service(ai_service_type)
     
-    def generate(self, topic: str, outline: List[Dict[str, Any]], template_id: Optional[str] = None) -> Optional[str]:
+    def generate(self, topic: str, outline: List[Dict[str, Any]], template_id: Optional[str] = None, max_pages: Optional[int] = None) -> Optional[str]:
         """
-        根据大纲生成Word文档
+        生成Word文档
         
         Args:
-            topic: 文档主题
-            outline: 文档大纲
-            template_id: 可选的模板ID
+            topic: 主题
+            outline: 大纲内容
+            template_id: 模板ID
+            max_pages: 限制生成的最大页数
             
         Returns:
-            生成的Word文件路径，如果失败则返回None
+            生成的Word文档路径
         """
         try:
             logger.info(f"开始生成Word文档: 主题='{topic}', 章节数={len(outline)}")
             if template_id:
                 logger.info(f"使用模板: {template_id}")
+            if max_pages:
+                logger.info(f"应用页数限制: 最大 {max_pages} 页")
             
-            # 创建文档
+            # 创建文档对象
             doc = self._create_document(template_id)
-            logger.info(f"创建新的Word文档" + (f" (使用模板: {template_id})" if template_id else ""))
             
             # 添加标题页
             logger.info("添加标题页")
@@ -61,33 +63,84 @@ class WordGenerator:
             logger.info("添加目录")
             self._add_toc(doc)
             
+            # 如果有页数限制，估算每个章节可用的页数
+            section_page_allocation = None
+            fixed_pages = 3  # 标题页、目录页、参考文献页
+            if max_pages:
+                available_pages = max_pages - fixed_pages
+                if available_pages <= 0:
+                    logger.warning(f"页数限制({max_pages})太小，至少需要{fixed_pages}页基本内容，将使用最小合理值")
+                    available_pages = 1
+                
+                # 如果章节数超过可用页数，需要裁剪章节
+                if len(outline) > available_pages:
+                    logger.warning(f"章节数({len(outline)})超过可用页数({available_pages})，将裁剪章节")
+                    # 保留最重要的章节（如开头和结尾章节）
+                    if available_pages >= 2:
+                        outline = outline[:available_pages-1] + [outline[-1]]
+                    else:
+                        outline = outline[:available_pages]
+                
+                # 重新计算每个章节可用的页数
+                available_pages = max_pages - fixed_pages
+                pages_per_section = available_pages // len(outline)
+                remaining_pages = available_pages % len(outline)
+                
+                # 分配给每个章节的页数（简单分配策略）
+                section_page_allocation = [pages_per_section] * len(outline)
+                # 将剩余页数分配给前面的章节
+                for i in range(remaining_pages):
+                    section_page_allocation[i] += 1
+                
+                logger.info(f"章节页数分配: {section_page_allocation}")
+            
+            # 计算每页大约的段落数（估算值）
+            paragraphs_per_page = 15
+            
             # 添加章节内容
+            total_paragraphs = 0
             for section_index, section in enumerate(outline):
                 section_title = section["title"]
                 logger.info(f"处理章节 {section_index+1}/{len(outline)}: '{section_title}'")
-                self._add_section(doc, section, topic)
+                
+                # 如果有页数限制，计算本章节可用的段落数
+                max_section_paragraphs = None
+                if max_pages and section_page_allocation:
+                    max_section_paragraphs = section_page_allocation[section_index] * paragraphs_per_page
+                    logger.info(f"  章节 '{section_title}' 可用页数: {section_page_allocation[section_index]}，估计段落数: {max_section_paragraphs}")
+                
+                # 添加章节，传递段落限制
+                section_paragraphs = self._add_section(doc, section, topic, max_section_paragraphs)
+                total_paragraphs += section_paragraphs
                 
                 # 记录子章节信息
                 subsections = section.get("subsections", [])
                 if subsections:
                     logger.info(f"  章节 '{section_title}' 包含 {len(subsections)} 个子章节")
-                    for i, subsection in enumerate(subsections):
-                        subsection_title = subsection.get("title", "未知子章节")
-                        logger.info(f"    子章节 {i+1}: '{subsection_title}'")
             
             # 添加参考文献
             logger.info("添加参考文献")
             self._add_references(doc, topic)
             
-            # 保存文件
-            file_name = f"{topic.replace(' ', '_')}_document.docx"
-            file_path = os.path.join(self.output_dir, file_name)
-            doc.save(file_path)
+            # 保存文件 - 使用安全的文件名
+            sanitized_topic = self._sanitize_filename(topic)
+            # 确保文件保存到 downloads 子目录
+            downloads_dir = os.path.join(self.output_dir, "downloads")
+            os.makedirs(downloads_dir, exist_ok=True)
+            output_path = os.path.join(downloads_dir, f"{sanitized_topic}_document.docx")
+            logger.info(f"保存Word文件: {output_path}")
+            doc.save(output_path)
             
             # 计算页数（近似值）
-            page_count = len(doc.paragraphs) // 20  # 假设每页约20个段落
-            logger.info(f"Word文档生成成功: 约 {page_count} 页, 保存至: {file_path}")
-            return file_path
+            page_count = total_paragraphs // paragraphs_per_page + 3  # +3 for title, TOC, references
+            logger.info(f"Word文档生成成功: 约 {page_count} 页, 保存至: {output_path}")
+            
+            if max_pages:
+                logger.info(f"页数限制: {max_pages} 页, 估计实际生成: {page_count} 页")
+                if page_count > max_pages:
+                    logger.warning(f"生成的页数({page_count})可能超过限制({max_pages})，实际页数可能会有所不同")
+            
+            return output_path
             
         except Exception as e:
             logger.error(f"生成Word文档时出错: {str(e)}")
@@ -174,9 +227,18 @@ class WordGenerator:
         # 添加分页符
         doc.add_page_break()
     
-    def _add_section(self, doc: Document, section: Dict[str, Any], topic: str) -> None:
+    def _add_section(self, doc: Document, section: Dict[str, Any], topic: str, max_section_paragraphs: Optional[int] = None) -> int:
         """
         添加章节
+        
+        Args:
+            doc: 文档对象
+            section: 章节信息
+            topic: 文档主题
+            max_section_paragraphs: 段落数量限制
+            
+        Returns:
+            添加的段落数量
         """
         # 添加章节标题
         section_title = section["title"]
@@ -185,23 +247,64 @@ class WordGenerator:
         # 使用AI服务生成章节内容
         content = self.ai_service.generate_section_content(topic, section_title, "word")
         
-        # 添加章节介绍
-        intro = doc.add_paragraph()
-        intro.add_run(content)
+        # 将内容分段添加
+        paragraphs = content.strip().split('\n\n')
+        
+        # 计算段落总数
+        paragraph_count = len(paragraphs)
         
         # 添加子章节
         subsections = section.get("subsections", [])
         if not subsections:
             # 如果没有子章节，添加一些默认内容
-            self._add_default_content(doc, section_title, topic)
-            return
+            default_paragraphs = self._add_default_content(doc, section_title, topic, max_section_paragraphs)
+            return default_paragraphs
         
+        # 如果有段落限制，计算子章节可分配的段落数
+        subsection_paragraph_limit = None
+        if max_section_paragraphs:
+            # 每个子章节平均分配段落，预留一些段落给章节介绍
+            subsection_paragraph_limit = (max_section_paragraphs - 3) // len(subsections)
+            if subsection_paragraph_limit < 2:
+                subsection_paragraph_limit = 2  # 确保至少有两个段落
+        
+        # 首先添加章节介绍段落（最多3段）
+        intro_paragraphs = min(3, len(paragraphs))
+        if max_section_paragraphs and intro_paragraphs > max_section_paragraphs // 3:
+            intro_paragraphs = max_section_paragraphs // 3
+        
+        added_paragraphs = 0
+        for i in range(intro_paragraphs):
+            p = doc.add_paragraph()
+            p.add_run(paragraphs[i].strip())
+            p.paragraph_format.line_spacing = 1.5
+            added_paragraphs += 1
+        
+        # 然后添加子章节
         for subsection in subsections:
-            self._add_subsection(doc, subsection, section_title, topic)
+            # 如果已经达到段落限制，停止添加
+            if max_section_paragraphs and added_paragraphs >= max_section_paragraphs:
+                break
+                
+            # 添加子章节，传递段落限制
+            subsection_paragraphs = self._add_subsection(doc, subsection, section_title, topic, subsection_paragraph_limit)
+            added_paragraphs += subsection_paragraphs
+        
+        return added_paragraphs
     
-    def _add_subsection(self, doc: Document, subsection: Dict[str, Any], section_title: str, topic: str) -> None:
+    def _add_subsection(self, doc: Document, subsection: Dict[str, Any], section_title: str, topic: str, max_paragraphs: Optional[int] = None) -> int:
         """
         添加子章节
+        
+        Args:
+            doc: 文档对象
+            subsection: 子章节信息
+            section_title: 父章节标题
+            topic: 文档主题
+            max_paragraphs: 段落数量限制
+            
+        Returns:
+            添加的段落数量
         """
         # 添加子章节标题
         subsection_title = subsection["title"]
@@ -212,15 +315,32 @@ class WordGenerator:
         
         # 将内容分段添加
         paragraphs = content.strip().split('\n\n')
+        
+        # 如果有限制，裁剪段落数量
+        if max_paragraphs and len(paragraphs) > max_paragraphs:
+            paragraphs = paragraphs[:max_paragraphs]
+        
+        # 添加段落
         for p_text in paragraphs:
             if p_text:
                 p = doc.add_paragraph()
                 p.add_run(p_text.strip())
                 p.paragraph_format.line_spacing = 1.5
+        
+        return len(paragraphs)
     
-    def _add_default_content(self, doc: Document, section_title: str, topic: str) -> None:
+    def _add_default_content(self, doc: Document, section_title: str, topic: str, max_paragraphs: Optional[int] = None) -> int:
         """
         添加默认内容
+        
+        Args:
+            doc: 文档对象
+            section_title: 章节标题
+            topic: 文档主题
+            max_paragraphs: 段落数量限制
+            
+        Returns:
+            添加的段落数量
         """
         content = f"""
 {section_title}是{topic}的核心组成部分，它包含多个关键要素和特性。
@@ -235,11 +355,18 @@ class WordGenerator:
         """
         
         paragraphs = content.strip().split('\n\n')
+        
+        # 如果有限制，裁剪段落数量
+        if max_paragraphs and len(paragraphs) > max_paragraphs:
+            paragraphs = paragraphs[:max_paragraphs]
+        
         for p_text in paragraphs:
             if p_text:
                 p = doc.add_paragraph()
                 p.add_run(p_text.strip())
                 p.paragraph_format.line_spacing = 1.5
+        
+        return len(paragraphs)
     
     def _add_references(self, doc: Document, topic: str) -> None:
         """
@@ -262,3 +389,12 @@ class WordGenerator:
             p.add_run(ref)
             p.paragraph_format.first_line_indent = Inches(0.5)
             p.paragraph_format.line_spacing = 1.5 
+
+    def _sanitize_filename(self, filename: str) -> str:
+        """
+        对文件名进行安全处理
+        """
+        # 替换非法字符为下划线
+        sanitized = ''.join(c if c.isalnum() or c in '-_.' else '_' for c in filename)
+        # 确保文件名长度不超过255个字符
+        return sanitized[:255] 
